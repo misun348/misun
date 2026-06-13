@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>장미 선 게임 : 에피소드 5 장미선의 역습</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #0b0c10;
+            color: #fff;
+            font-family: 'Malgun Gothic', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        
+        h1 {
+            color: #45f3ff; 
+            margin: 0 0 8px 0; 
+            font-size: 26px;
+            text-shadow: 0 0 10px rgba(69,243,255,0.5);
+        }
+
+        #control-guide {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            background: #1f2833;
+            padding: 8px 16px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(255,71,87,0.3);
+            border: 2px solid #ff4757;
+        }
+        .guide-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 0 8px;
+        }
+        .guide-item:not(:last-child) {
+            border-right: 1px solid #45f3ff;
+        }
+        .key-badge {
+            background: #45f3ff;
+            color: #0b0c10;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-bottom: 3px;
+            font-size: 11px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+        }
+        .key-badge.ult { background: #ff4757; color: white; animation: pulse 0.8s infinite alternate; }
+        .key-badge.danger { background: #ff4757; color: #fff; animation: blink 1s infinite; }
+
+        @keyframes blink { 50% { opacity: 0.5; } }
+        @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.06); } }
+
+        canvas {
+            background: linear-gradient(180deg, #0f172a, #020617);
+            border: 4px solid #45f3ff;
+            box-shadow: 0 0 30px rgba(69, 243, 255, 0.3);
+            border-radius: 12px;
+            cursor: crosshair;
+        }
+        
+        #ui-container {
+            margin-top: 12px;
+            display: flex;
+            gap: 15px;
+            width: 100%;
+            justify-content: center;
+        }
+        .skill-box {
+            padding: 8px 20px;
+            background: #1f2833;
+            border-radius: 8px;
+            border: 2px solid #45f3ff;
+            font-weight: bold;
+            font-size: 15px;
+            min-width: 190px;
+            text-align: center;
+            box-shadow: 0 4px 10px rgba(69, 243, 255, 0.1);
+        }
+        .ready { color: #00ff88; text-shadow: 0 0 8px rgba(0,255,136,0.5); }
+        .cooldown { color: #ff4757; text-shadow: 0 0 8px rgba(255,71,87,0.3); }
+    </style>
+</head>
+<body>
+
+    <h1>🌹 장미 선 게임: 에피소드 5 ☀️</h1>
+    
+    <div id="control-guide">
+        <div class="guide-item">
+            <span class="key-badge">W, A, S, D</span>
+            <span>🏃 이동 / Shift 대쉬</span>
+        </div>
+        <div class="guide-item">
+            <span class="key-badge" style="background:#6c5ce7; color:#fff;">🛡️ 연타 저항 버프</span>
+            <span style="color:#00ff88;">스페이스바 연타 시 그랩 피해 50% 감소!</span>
+        </div>
+        <div class="guide-item">
+            <span class="key-badge danger">🚨 크래시 돌진</span>
+            <span>보스 충돌 시 화면 격렬하게 흔들림!</span>
+        </div>
+        <div class="guide-item">
+            <span class="key-badge ult">Q 키</span>
+            <span>💥 초찰진 흑백 난타 궁극기</span>
+        </div>
+    </div>
+    
+    <canvas id="gameCanvas" width="850" height="600"></canvas>
+    
+    <div id="ui-container">
+        <div class="skill-box">대쉬 [Shift]: <span id="dashStatus" class="ready">READY</span></div>
+        <div class="skill-box">궁극기 [Q]: <span id="punchStatus" class="ready">READY</span></div>
+    </div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const dashStatusUI = document.getElementById('dashStatus');
+const punchStatusUI = document.getElementById('punchStatus');
+
+// ⭐ 업데이트: 대기 스크린 상태 관리 변수 추가
+let isGameStarted = false; 
+
+let gameActive = true;
+let score = 0;
+let bossPhase = 1;
+let gameOverReason = "";
+
+let shakeTimer = 0;
+let shakeIntensity = 0;
+
+const player = {
+    x: 425,
+    y: 500,
+    size: 46, 
+    speed: 6.5,
+    hp: 200,
+    maxHp: 200,
+    lastDash: 0,
+    dashCooldown: 1500,
+    isDashing: false,
+    dashTimer: 0,
+    history: []
+};
+
+const keys = {};
+let mouse = { x: 0, y: 0 };
+
+let playerRocket = null; 
+let rocketParticles = []; 
+
+let enemies = []; 
+let boss = null;
+let bossProjectiles = []; 
+let bossClones = []; 
+let items = []; 
+let ultParticles = []; 
+
+let lastPunch = 0;
+const punchCooldown = 7000; 
+let ultState = "READY"; 
+let ultTimer = 0;
+
+let isGrabbed = false;
+let grabEscapeProgress = 0;
+let grabShakeOffset = 0;
+let isPressingSpace = false; // ⭐ 업데이트: 연타 확인용 내부 토글 플래그
+
+const BOSS_SPAWN_SCORE = 8;
+let bossSpawned = false;
+
+let bossDeathSequence = false;
+let bossDeathTimer = 0;
+let deadBossX = 0;
+let deadBossY = 0;
+
+window.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+});
+
+canvas.addEventListener('mousedown', () => {
+    // ⭐ 업데이트: 클릭 시 대기 화면 탈출 및 게임 시작 루틴 활성화
+    if (!isGameStarted) {
+        isGameStarted = true;
+        return;
+    }
+
+    if (!gameActive || ultState !== "READY" || isGrabbed || bossDeathSequence) return;
+    if (boss && boss.rushState !== "READY") return;
+    
+    if (!playerRocket) {
+        playerRocket = { x: player.x, y: player.y - 25, width: 18, height: 42, speed: 11, angle: 0 };
+        triggerShake(3, 4);
+    }
+});
+
+window.addEventListener('keydown', e => {
+    if (!isGameStarted) return;
+
+    const keyStr = e.key.toLowerCase();
+    keys[keyStr] = true;
+    keys[e.code] = true;
+
+    if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && Date.now() - player.lastDash > player.dashCooldown && gameActive && ultState === "READY" && !isGrabbed && !bossDeathSequence) {
+        player.isDashing = true;
+        player.lastDash = Date.now();
+        player.dashTimer = 10;
+    }
+
+    if (keyStr === 'q' && Date.now() - lastPunch > punchCooldown && gameActive && bossSpawned && ultState === "READY" && !isGrabbed && !bossDeathSequence) {
+        if(boss && boss.rushState === "READY") { 
+            lastPunch = Date.now();
+            ultState = "DASHING"; 
+        }
+    }
+
+    if (e.code === 'Space' && gameActive && isGrabbed) {
+        isPressingSpace = true; // 연타 버프 활성화 플래그 ON
+        grabEscapeProgress += 14; 
+        triggerShake(2, 5);
+        if (grabEscapeProgress >= 100) {
+            isGrabbed = false;
+            player.y = boss.y + 200;
+            triggerShake(12, 12);
+        }
+    }
+
+    if (!gameActive && e.key === 'Enter') resetGame();
+});
+
+window.addEventListener('keyup', e => {
+    keys[e.key.toLowerCase()] = false;
+    keys[e.code] = false;
+    if (e.code === 'Space') {
+        isPressingSpace = false; // 키를 때면 원상 복구
+    }
+});
+
+function triggerShake(duration, intensity) {
+    shakeTimer = duration;
+    shakeIntensity = intensity;
+}
+
+function resetGame() {
+    player.x = 425; player.y = 500; player.hp = 200; player.history = [];
+    playerRocket = null; rocketParticles = []; enemies = []; bossProjectiles = [];
+    bossClones = []; items = []; ultParticles = []; boss = null;
+    bossSpawned = false; bossDeathSequence = false; score = 0; bossPhase = 1;
+    gameActive = true; gameOverReason = ""; ultState = "READY"; isGrabbed = false; isPressingSpace = false;
+}
+
+function checkCollision(obj1, obj2) {
+    const r1 = obj1.size ? obj1.size/2 : (obj1.width ? obj1.width : 16);
+    const r2 = obj2.size ? obj2.size/2 : (obj2.width ? obj2.width : 16);
+    return Math.hypot(obj1.x - obj2.x, obj1.y - obj2.y) < (r1 + r2);
+}
+
+function spawnEnemy() {
+    if (!isGameStarted || bossSpawned || !gameActive || bossDeathSequence) return; 
+
+    const types = ['🌹', '☀️'];
+    const type = types[Math.floor(Math.random() * types.length)];
+    
+    enemies.push({
+        x: Math.random() * (canvas.width - 60) + 30, y: -30, type: type, size: 35,
+        speed: Math.random() * 2 + 3.8, hp: type === '☀️' ? 2 : 1
+    });
+
+    if (Math.random() < 0.45) {
+        items.push({ x: Math.random() * (canvas.width - 60) + 30, y: -30, size: 30, speed: 2.2, isBig: false });
+    }
+}
+
+function spawnBoss() {
+    const baseHp = 700 + (bossPhase * 500); 
+    boss = {
+        x: canvas.width / 2, y: 130, size: 85, hp: baseHp, maxHp: baseHp, moveDir: 1, lastAttack: 0,
+        attackDelay: Math.max(600, 1800 - (bossPhase * 150)),
+        rushState: "READY", rushTimer: 0, startX: 0, startY: 0, targetX: 0, targetY: 0, rushAngle: 0,
+        hasDamagedPlayer: false, nextRushTime: Date.now() + 4000
+    };
+    bossSpawned = true;
+    bossClones = []; 
+}
+
+function handleBossDeath() {
+    deadBossX = boss.x; deadBossY = boss.y;
+    bossDeathSequence = true;
+    bossDeathTimer = 180; 
+    
+    items.push({ x: boss.x, y: boss.y, size: 65, speed: 0.5, isBig: true });
+    
+    boss = null;
+    bossProjectiles = [];
+    bossClones = [];
+}
+
+function executeBossPattern(sourceX, sourceY, isClone = false) {
+    const pattern = Math.floor(Math.random() * 5);
+    
+    if (pattern === 0) {
+        const spawnCount = isClone ? 2 : 5;
+        for(let i=0; i<spawnCount; i++) {
+            enemies.push({
+                x: sourceX + (Math.random() - 0.5) * 120, y: sourceY + 20,
+                type: Math.random() > 0.5 ? '🌹' : '☀️', size: 35, speed: Math.random() * 2 + 4, hp: 1
+            });
+        }
+    } else if (pattern === 1) {
+        const baseAngle = Math.atan2(player.y - sourceY, player.x - sourceX);
+        const angles = isClone ? [baseAngle] : [baseAngle - 0.25, baseAngle, baseAngle + 0.25];
+        angles.forEach(ang => {
+            bossProjectiles.push({ x: sourceX, y: sourceY + 20, vx: Math.cos(ang) * (4.2 + bossPhase*0.2), vy: Math.sin(ang) * (4.2 + bossPhase*0.2), size: 25, type: '☀️' });
+        });
+    } else if (pattern === 2) {
+        const count = isClone ? Math.floor((6 + bossPhase)/2) : (8 + bossPhase); 
+        for(let i=0; i<count; i++) {
+            const ang = (Math.PI * 2 / count) * i;
+            bossProjectiles.push({ x: sourceX, y: sourceY + 20, vx: Math.cos(ang) * 3.6, vy: Math.sin(ang) * 3.6, size: 25, type: '🌹' });
+        }
+    } else if (pattern === 3) {
+        if (!isClone) {
+            const gap = Math.floor(Math.random() * 8);
+            for(let i=0; i<10; i++) {
+                if (i === gap || i === gap + 1) continue; 
+                bossProjectiles.push({ x: i * 90 + 25, y: sourceY + 30, vx: 0, vy: 3.6, size: 25, type: '🌹' });
+            }
+        }
+    } else if (pattern === 4) {
+        if (!isClone && bossClones.length === 0) {
+            bossClones.push({ x: boss.x - 165, y: boss.y, size: 85, lifeTimer: 420 }); 
+            bossClones.push({ x: boss.x + 165, y: boss.y, size: 85, lifeTimer: 420 });
+            triggerShake(8, 8);
+        } else {
+            bossProjectiles.push({ x: sourceX, y: sourceY + 30, size: 28, vx: 0, vy: 0, type: 'GRAB_SHOT' });
+        }
+    }
+}
+
+function update() {
+    if (!isGameStarted || !gameActive) return;
+
+    const timeSinceDash = Date.now() - player.lastDash;
+    if (timeSinceDash < player.dashCooldown) {
+        dashStatusUI.textContent = `${((player.dashCooldown - timeSinceDash) / 1000).toFixed(1)}s`;
+        dashStatusUI.className = "cooldown";
+    } else {
+        dashStatusUI.textContent = "READY";
+        dashStatusUI.className = "ready";
+    }
+
+    const timeSincePunch = Date.now() - lastPunch;
+    if (timeSincePunch < punchCooldown && ultState === "READY") {
+        punchStatusUI.textContent = `${((punchCooldown - timeSincePunch) / 1000).toFixed(1)}s`;
+        punchStatusUI.className = "cooldown";
+    } else if (ultState !== "READY") {
+        punchStatusUI.textContent = "💥 ACTIVATED";
+        punchStatusUI.className = "cooldown";
+    } else {
+        punchStatusUI.textContent = "READY";
+        punchStatusUI.className = "ready";
+    }
+
+    if (bossDeathSequence) {
+        bossDeathTimer--;
+        triggerShake(2, 5);
+        
+        items.forEach((item, idx) => {
+            item.y += item.speed;
+            if (checkCollision(player, item)) {
+                const heal = item.isBig ? 100 : 30; 
+                player.hp = Math.min(player.maxHp, player.hp + heal);
+                items.splice(idx, 1);
+                triggerShake(12, 15);
+            }
+        });
+
+        if (bossDeathTimer <= 0) {
+            bossDeathSequence = false;
+            bossPhase++;
+            spawnBoss(); 
+        }
+        return;
+    }
+
+    let timeScale = 1.0;
+    if (ultState === "PRE_SLOW") timeScale = 0.06; 
+    if (ultState === "PUNCHING") timeScale = 0.14;
+
+    if (isGrabbed && boss) {
+        grabShakeOffset = (Math.random() - 0.5) * 28;
+        player.x = boss.x + grabShakeOffset; player.y = boss.y + 60; 
+        
+        // ⭐ 업데이트: 스페이스 연타 중(isPressingSpace === true) 일 때 데미지를 50% 줄여서 가산시킴
+        let baseGrabDamage = (0.6 + (bossPhase * 0.25));
+        if (isPressingSpace) {
+            baseGrabDamage *= 0.5; // 피해량 50% 면역 경감
+        }
+        
+        player.hp -= baseGrabDamage; 
+        triggerShake(2, 7);
+        if (player.hp <= 0) { gameActive = false; gameOverReason = "LOSE"; }
+    }
+
+    if (ultState === "DASHING" && boss) {
+        const dx = boss.x - player.x, dy = (boss.y + 80) - player.y, dist = Math.hypot(dx, dy);
+        if (dist <= 190) { ultState = "PRE_SLOW"; ultTimer = 25; } 
+        else { player.x += (dx / dist) * 32; player.y += (dy / dist) * 32; }
+    } 
+    else if (ultState === "PRE_SLOW" && boss) {
+        ultTimer--;
+        const dx = boss.x - player.x, dy = (boss.y + 80) - player.y, dist = Math.hypot(dx, dy);
+        if (dist > 15) { player.x += (dx / dist) * 3; player.y += (dy / dist) * 3; }
+        if (ultTimer <= 0) { ultState = "PUNCHING"; ultTimer = 90; }
+    }
+    else if (ultState === "PUNCHING" && boss) {
+        ultTimer--;
+        boss.hp -= (7 + bossPhase * 0.7); 
+        
+        if (Math.random() < 0.75) {
+            const emo = ['👊', '💥', '🔥', '✨'];
+            ultParticles.push({
+                x: boss.x + (Math.random() - 0.5) * 150,
+                y: boss.y + 20 + (Math.random() - 0.5) * 150,
+                txt: emo[Math.floor(Math.random() * emo.length)],
+                vx: (Math.random() - 0.5) * 12, vy: (Math.random() - 0.5) * 12,
+                alpha: 1.0, scale: Math.random() * 1.4 + 1.0
+            });
+        }
+        triggerShake(4, 35); 
+
+        if (boss.hp <= 0) {
+            ultState = "READY";
+            handleBossDeath();
+            return;
+        }
+        if (ultTimer <= 0) { ultState = "READY"; player.y = boss.y + 210; }
+    }
+
+    ultParticles.forEach((p, idx) => {
+        p.x += p.vx; p.y += p.vy; p.alpha -= 0.04;
+        if (p.alpha <= 0) ultParticles.splice(idx, 1);
+    });
+
+    if (ultState === "READY" && !isGrabbed) {
+        let currentSpeed = player.speed;
+        if (player.isDashing) {
+            currentSpeed = player.speed * 2.5; player.dashTimer--;
+            if (player.dashTimer <= 0) player.isDashing = false;
+        }
+        if (keys['arrowup'] || keys['w']) player.y -= currentSpeed;
+        if (keys['arrowdown'] || keys['s']) player.y += currentSpeed;
+        if (keys['arrowleft'] || keys['a']) player.x -= currentSpeed;
+        if (keys['arrowright'] || keys['d']) player.x += currentSpeed;
+    }
+
+    player.x = Math.max(player.size, Math.min(canvas.width - player.size, player.x));
+    player.y = Math.max(player.size, Math.min(canvas.height - player.size, player.y));
+    player.history.push({ x: player.x, y: player.y });
+    if (player.history.length > 10) player.history.shift();
+
+    items.forEach((item, idx) => {
+        item.y += item.speed * timeScale;
+        if (checkCollision(player, item)) {
+            const heal = item.isBig ? 100 : 30;
+            player.hp = Math.min(player.maxHp, player.hp + heal);
+            items.splice(idx, 1);
+            triggerShake(6, 8);
+            return;
+        }
+        if (item.y > canvas.height + 40) items.splice(idx, 1);
+    });
+
+    if (playerRocket) {
+        playerRocket.angle = Math.atan2(mouse.y - playerRocket.y, mouse.x - playerRocket.x);
+        playerRocket.x += Math.cos(playerRocket.angle) * playerRocket.speed;
+        playerRocket.y += Math.sin(playerRocket.angle) * playerRocket.speed;
+        if (Math.random() < 0.6) {
+            rocketParticles.push({
+                x: playerRocket.x - Math.cos(playerRocket.angle)*15, y: playerRocket.y - Math.sin(playerRocket.angle)*15,
+                size: Math.random() * 5 + 4, alpha: 0.8
+            });
+        }
+        if (playerRocket.y < -100 || playerRocket.y > canvas.height + 100 || playerRocket.x < -100 || playerRocket.x > canvas.width + 100) playerRocket = null;
+    }
+
+    rocketParticles.forEach((p, idx) => {
+        p.alpha -= 0.03; p.size += 0.2;
+        if (p.alpha <= 0) rocketParticles.splice(idx, 1);
+    });
+
+    if (score >= BOSS_SPAWN_SCORE && !bossSpawned) spawnBoss();
+
+    enemies.forEach((enemy, eIndex) => {
+        enemy.y += enemy.speed * timeScale;
+        if (checkCollision(player, enemy) && ultState === "READY" && !isGrabbed) {
+            const scaledEnemyDamage = 20 + (bossPhase - 1) * 5; 
+            player.hp -= scaledEnemyDamage; 
+            enemies.splice(eIndex, 1); 
+            triggerShake(6, 8);
+            if (player.hp <= 0) { gameActive = false; gameOverReason = "LOSE"; }
+            return;
+        }
+        if (enemy.y > canvas.height + 20) { enemies.splice(eIndex, 1); return; }
+        if (playerRocket && checkCollision(playerRocket, enemy)) {
+            enemy.hp--; playerRocket = null; triggerShake(5, 8); 
+            if (enemy.hp <= 0) { enemies.splice(eIndex, 1); score++; }
+        }
+    });
+
+    if (boss && ultState === "READY") {
+        if (boss.rushState === "READY" && Date.now() > boss.nextRushTime && !isGrabbed) {
+            boss.rushState = "AIMING"; boss.rushTimer = 180;
+            boss.startX = boss.x; boss.startY = boss.y;
+            boss.targetX = player.x; boss.targetY = player.y;
+            boss.rushAngle = Math.atan2(player.y - boss.y, player.x - boss.x);
+            boss.hasDamagedPlayer = false; 
+        }
+
+        if (boss.rushState === "READY") {
+            boss.x += boss.moveDir * (2.4 + bossPhase * 0.4) * timeScale;
+            if (boss.x > canvas.width - boss.size || boss.x < boss.size) boss.moveDir *= -1;
+
+            if (Date.now() - boss.lastAttack > boss.attackDelay && !isGrabbed) {
+                executeBossPattern(boss.x, boss.y, false);
+                bossClones.forEach(clone => executeBossPattern(clone.x, clone.y, true));
+                boss.lastAttack = Date.now();
+            }
+        } 
+        else if (boss.rushState === "AIMING") {
+            boss.rushTimer -= timeScale;
+            if (boss.rushTimer > 20) {
+                boss.targetX = player.x; boss.targetY = player.y;
+                boss.rushAngle = Math.atan2(player.y - boss.y, player.x - boss.x);
+            }
+            if (boss.rushTimer <= 0) { boss.rushState = "RUSHING"; triggerShake(10, 18); }
+        } 
+        else if (boss.rushState === "RUSHING") {
+            const speed = 24.0; 
+            boss.x += Math.cos(boss.rushAngle) * speed * timeScale;
+            boss.y += Math.sin(boss.rushAngle) * speed * timeScale;
+
+            if (!boss.hasDamagedPlayer && checkCollision(boss, player)) {
+                const scaledRushDamage = 50 + (bossPhase - 1) * 15;
+                player.hp -= scaledRushDamage; 
+                boss.hasDamagedPlayer = true; 
+                triggerShake(35, 55); // 돌진 피격 충돌 시 화면 초대형 쉐이크
+                if (player.hp <= 0) { gameActive = false; gameOverReason = "LOSE"; }
+            }
+            if (boss.y > canvas.height || boss.x < -100 || boss.x > canvas.width + 100 || boss.y < -100) boss.rushState = "RETURNING";
+        } 
+        else if (boss.rushState === "RETURNING") {
+            const dx = boss.startX - boss.x, dy = boss.startY - boss.y, dist = Math.hypot(dx, dy);
+            if (dist < 15) {
+                boss.x = boss.startX; boss.y = boss.startY; boss.rushState = "READY";
+                boss.nextRushTime = Date.now() + 6000 + (Math.random() * 3000);
+            } else {
+                boss.x += (dx / dist) * 14 * timeScale; boss.y += (dy / dist) * 14 * timeScale;
+            }
+        }
+
+        bossClones.forEach((clone, cIdx) => {
+            clone.lifeTimer -= timeScale;
+            if (cIdx === 0 && boss.rushState === "READY") clone.x = boss.x - 165;
+            if (cIdx === 1 && boss.rushState === "READY") clone.x = boss.x + 165;
+            clone.y = boss.y;
+            if (clone.lifeTimer <= 0) bossClones.splice(cIdx, 1);
+        });
+
+        bossProjectiles.forEach((proj, pIndex) => {
+            if (proj.type === 'GRAB_SHOT') {
+                const angle = Math.atan2(player.y - proj.y, player.x - proj.x);
+                proj.x += Math.cos(angle) * (3.3 + bossPhase * 0.2) * timeScale;
+                proj.y += Math.sin(angle) * (3.3 + bossPhase * 0.2) * timeScale;
+            } else {
+                proj.x += proj.vx * timeScale; proj.y += proj.vy * timeScale;
+            }
+
+            if (checkCollision(player, proj) && ultState === "READY") {
+                if (proj.type === 'GRAB_SHOT') {
+                    if (!isGrabbed) { isGrabbed = true; grabEscapeProgress = 0; triggerShake(15, 12); }
+                } else {
+                    if (!isGrabbed) { 
+                        const scaledProjDamage = 12 + (bossPhase - 1) * 3;
+                        player.hp -= scaledProjDamage; 
+                        triggerShake(5, 7); 
+                    }
+                }
+                bossProjectiles.splice(pIndex, 1);
+                if (player.hp <= 0) { gameActive = false; gameOverReason = "LOSE"; }
+                return;
+            }
+            if (playerRocket && checkCollision(playerRocket, proj)) {
+                playerRocket = null; bossProjectiles.splice(pIndex, 1); score++; triggerShake(4, 6);
+            }
+            if (proj.x < -20 || proj.x > canvas.width + 20 || proj.y < -20 || proj.y > canvas.height + 20) bossProjectiles.splice(pIndex, 1);
+        });
+
+        if (playerRocket && checkCollision(playerRocket, boss)) {
+            boss.hp -= 55; playerRocket = null; triggerShake(12, 16); 
+            if (boss.hp <= 0) handleBossDeath();
+        }
+    }
+
+    if (shakeTimer > 0) shakeTimer--;
+    else shakeIntensity = 0;
+}
+
+function draw() {
+    ctx.save();
+    if (shakeTimer > 0) {
+        ctx.translate((Math.random() - 0.5) * shakeIntensity, (Math.random() - 0.5) * shakeIntensity);
+    }
+
+    // 대기 스크린 배경 및 게임 인플레이 배경 처리 구분
+    if (!isGameStarted) {
+        ctx.fillStyle = '#05070f';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // 시네마틱 프롤로그 텍스트 렌더링
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff4757';
+        ctx.font = 'bold 45px Impact, Arial';
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = 'rgba(255, 71, 87, 0.6)';
+        ctx.fillText('에피소드 5 : 장미선의 역습', canvas.width / 2, canvas.height / 2 - 30);
+        
+        ctx.fillStyle = '#45f3ff';
+        ctx.font = 'bold 22px Arial';
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = 'rgba(69, 243, 255, 0.5)';
+        // 텍스트 깜빡임 무드 효과
+        ctx.globalAlpha = 0.4 + Math.abs(Math.sin(Date.now() / 230)) * 0.6;
+        ctx.fillText('시작하려면 클릭하세요!', canvas.width / 2, canvas.height / 2 + 40);
+        
+        ctx.restore();
+        return; 
+    }
+
+    if (ultState === "PUNCHING") {
+        ctx.fillStyle = (Math.floor(Date.now() / 50) % 2 === 0) ? '#ff2a4b' : '#000000'; 
+    } else if (ultState === "PRE_SLOW") {
+        ctx.fillStyle = '#050a14'; 
+    } else {
+        ctx.fillStyle = '#060810'; 
+    }
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (boss && boss.rushState === "AIMING") {
+        ctx.save();
+        ctx.strokeStyle = (Math.floor(Date.now() / 100) % 2 === 0) ? 'rgba(255, 0, 50, 0.9)' : 'rgba(255, 0, 50, 0.2)';
+        ctx.lineWidth = 4; ctx.setLineDash([10, 10]); ctx.beginPath(); ctx.moveTo(boss.x, boss.y);
+        ctx.lineTo(boss.x + Math.cos(boss.rushAngle)*1200, boss.y + Math.sin(boss.rushAngle)*1200);
+        ctx.stroke(); ctx.restore();
+    }
+
+    rocketParticles.forEach(p => {
+        ctx.fillStyle = `rgba(148, 163, 184, ${p.alpha})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    });
+
+    player.history.forEach((pos, idx) => {
+        ctx.fillStyle = (ultState === "PUNCHING") ? `rgba(255, 255, 255, ${0.06 * idx})` : `rgba(69, 243, 255, ${0.05 * idx})`;
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, player.size / 2, 0, Math.PI * 2); ctx.fill();
+    });
+
+    ctx.fillStyle = (isGrabbed) ? '#6c5ce7' : ((ultState === "PUNCHING") ? '#ffffff' : (player.isDashing ? '#00ecff' : '#45f3ff'));
+    ctx.beginPath(); ctx.arc(player.x, player.y, player.size / 2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'black'; ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(isGrabbed ? ' Grab!' : '✈️', player.x, player.y + 5);
+
+    ultParticles.forEach(p => {
+        ctx.save(); ctx.globalAlpha = p.alpha; ctx.font = `${24 * p.scale}px Arial`;
+        ctx.fillText(p.txt, p.x, p.y); ctx.restore();
+    });
+
+    if (ultState === "PUNCHING" && boss) {
+        ctx.save(); font = 'bold 140px Arial'; ctx.fillStyle = '#ffffff'; 
+        ctx.fillText('👊💥', boss.x + (Math.random()-0.5)*90, boss.y + 40 + (Math.random()-0.5)*90);
+        ctx.restore();
+    }
+
+    items.forEach(item => { 
+        ctx.save();
+        if(item.isBig) {
+            ctx.font = '60px Arial'; ctx.shadowBlur = 20; ctx.shadowColor = '#ffd700';
+            ctx.fillText('🧪', item.x - 25, item.y + 20);
+            ctx.fillStyle = '#ffd700'; ctx.font = 'bold 14px Arial';
+            ctx.fillText('SUPER (+100)', item.x - 20, item.y - 40);
+        } else {
+            ctx.font = '28px Arial'; ctx.fillText('🧪', item.x - 12, item.y + 10);
+        }
+        ctx.restore();
+    });
+
+    if (playerRocket) {
+        ctx.save(); ctx.translate(playerRocket.x, playerRocket.y); ctx.rotate(playerRocket.angle + Math.PI / 2); 
+        ctx.fillStyle = '#ff9f1a'; ctx.fillRect(-6, playerRocket.height / 2, 12, 18);
+        ctx.fillStyle = '#ff4757'; ctx.fillRect(-3, playerRocket.height / 2, 6, 10);
+        ctx.fillStyle = '#4b5563'; ctx.fillRect(-playerRocket.width / 2, -playerRocket.height / 2, playerRocket.width, playerRocket.height);
+        ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.moveTo(-playerRocket.width / 2, -playerRocket.height / 2);
+        ctx.lineTo(0, -playerRocket.height / 2 - 16); ctx.lineTo(playerRocket.width / 2, -playerRocket.height / 2);
+        ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+
+    bossProjectiles.forEach(proj => { 
+        ctx.font = proj.type === 'GRAB_SHOT' ? '32px Arial' : '26px Arial';
+        ctx.fillText(proj.type === 'GRAB_SHOT' ? '😈' : proj.type, proj.x - 12, proj.y + 8);
+    });
+    enemies.forEach(enemy => { ctx.font = '26px Arial'; ctx.fillText(enemy.type, enemy.x - 12, enemy.y + 8); });
+
+    bossClones.forEach(clone => {
+        ctx.save(); ctx.globalAlpha = 0.65; ctx.font = '75px Arial'; ctx.fillText('👵✨', clone.x - 35, clone.y + 15); ctx.restore();
+    });
+
+    if (boss) {
+        ctx.save();
+        let bossEmoji = '👵⚡';
+        if (isGrabbed) bossEmoji = '👵😈';
+        else if (ultState === "PUNCHING") bossEmoji = '👵💥';
+        else if (boss.rushState === "AIMING") bossEmoji = '👵🎯';
+        else if (boss.rushState === "RUSHING") bossEmoji = '👵🚀';
+
+        ctx.font = '75px Arial'; ctx.fillText(bossEmoji, boss.x - 35, boss.y + 15);
+        ctx.fillStyle = '#ff4757'; ctx.font = 'bold 17px Arial';
+        let stateText = boss.rushState === "AIMING" ? `⚠️ 돌진 경보!!` : `장미선 본체 (Phase ${bossPhase})`;
+        ctx.fillText(stateText, boss.x - 65, boss.y - 55);
+
+        ctx.fillStyle = '#1f2833'; ctx.fillRect(boss.x - 90, boss.y - 45, 180, 10);
+        ctx.fillStyle = '#ff4757'; ctx.fillRect(boss.x - 90, boss.y - 45, (boss.hp / boss.maxHp) * 180, 10);
+        ctx.restore();
+    }
+
+    if (bossDeathSequence) {
+        ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0,0,canvas.width, canvas.height);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = (Math.floor(Date.now() / 150) % 2 === 0) ? '#ffea00' : '#ff3300';
+        ctx.font = 'bold 52px Impact';
+        ctx.fillText('🚨 더 높은 장미선 등장! 🚨', canvas.width/2, canvas.height/2 - 40);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px Arial';
+        ctx.fillText(`진화 준비 중... ${(bossDeathTimer/60).toFixed(1)}초 후 Phase ${bossPhase + 1} 진입`, canvas.width/2, canvas.height/2 + 20);
+        ctx.font = '75px Arial'; ctx.globalAlpha = 0.3; ctx.fillText('👵💥💨', deadBossX, deadBossY + 15);
+        ctx.restore();
+    }
+
+    if (isGrabbed) {
+        ctx.save(); ctx.fillStyle = 'rgba(11,12,16,0.85)'; ctx.fillRect(canvas.width/2 - 170, canvas.height/2 - 40, 340, 75);
+        ctx.fillStyle = '#ff4757'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+        
+        // ⭐ 업데이트: 연타 유도 문구 밑 저항 상태 텍스트 동적 분기 피드백
+        let noticeText = isPressingSpace ? '🛡️ 연타 중! (피해량 50% 감소 적용)' : '🚨 [스페이스바] 연타하여 탈출!! 🚨';
+        ctx.fillStyle = isPressingSpace ? '#00ff88' : '#ff4757';
+        ctx.fillText(noticeText, canvas.width/2, canvas.height/2 - 15);
+        
+        ctx.fillStyle = '#1f2833'; ctx.fillRect(canvas.width/2 - 140, canvas.height/2 + 8, 280, 14);
+        ctx.fillStyle = '#6c5ce7'; ctx.fillRect(canvas.width/2 - 140, canvas.height/2 + 8, (grabEscapeProgress / 100) * 280, 14);
+        ctx.restore();
+    }
+
+    ctx.fillStyle = '#45f3ff'; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'left';
+    ctx.fillText(`최고 단계: Phase ${bossPhase} (격추수: ${score})`, 20, 35);
+
+    ctx.fillStyle = '#1f2833'; ctx.fillRect(20, 50, 220, 20);
+    ctx.fillStyle = '#00ff88'; ctx.fillRect(20, 50, (player.hp / player.maxHp) * 220, 20);
+    ctx.fillStyle = 'black'; ctx.font = 'bold 13px Arial';
+    ctx.fillText(`체력 잔량: ${Math.max(0, Math.floor(player.hp))} / ${player.maxHp}`, 25, 65);
+
+    if (!gameActive) {
+        ctx.fillStyle = 'rgba(5, 5, 8, 0.97)'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff4757'; ctx.font = 'bold 52px Arial'; ctx.fillText('💥 MISSION FAILED 💥', canvas.width / 2, canvas.height / 2 - 25);
+        ctx.fillStyle = '#45f3ff'; ctx.font = 'bold 24px Arial';
+        ctx.fillText(`장미선에게 무릎 꿇은 단계: Phase ${bossPhase}`, canvas.width / 2, canvas.height / 2 + 25);
+        ctx.fillText('부활 후 재도전하려면 [Enter] 키 압착!', canvas.width / 2, canvas.height / 2 + 75);
+    }
+    ctx.restore();
+}
+
+setInterval(spawnEnemy, 650);
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+gameLoop();
+</script>
+</body>
+</html>
